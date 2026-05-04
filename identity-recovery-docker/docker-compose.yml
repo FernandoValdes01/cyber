@@ -4,6 +4,7 @@ services:
       context: ./ldap
     image: identity-recovery-docker-openldap
     container_name: openldap
+    command: ["--copy-service"]
     environment:
       LDAP_ORGANISATION: ${LDAP_ORGANISATION}
       LDAP_DOMAIN: ${LDAP_DOMAIN}
