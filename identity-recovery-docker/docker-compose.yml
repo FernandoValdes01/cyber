@@ -18,6 +18,10 @@ services:
       - "636:636"
     volumes:
       - ./certs:/container/service/slapd/assets/certs
+    networks:
+      default:
+        aliases:
+          - ldap.cyber.lab
     healthcheck:
       test: ["CMD", "ldapsearch", "-x", "-H", "ldaps://localhost:636", "-D", "cn=admin,${LDAP_BASE_DN}", "-w", "${LDAP_ADMIN_PASSWORD}", "-b", "${LDAP_BASE_DN}", "(objectClass=*)"]
       interval: 15s
@@ -52,3 +56,10 @@ services:
       - "8080:8080"
     volumes:
       - ./certs/ca.crt:/run/secrets/ca.crt:ro
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"

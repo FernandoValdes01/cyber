@@ -20,6 +20,12 @@ openssl rand -hex 32
 
 Pega el resultado de `openssl rand -hex 32` en `TOKEN_SECRET_KEY` dentro de `.env`.
 
+Si vas a probar el dominio inventado desde el host, agrega en `/etc/hosts`:
+
+```bash
+127.0.0.1 ldap.cyber.lab
+```
+
 Genera CA y certificado del servidor LDAP:
 
 ```bash
@@ -34,8 +40,9 @@ docker compose up --build
 ```
 
 Servicios:
-- LDAP seguro: `ldaps://localhost:636`
+- LDAP seguro: `ldaps://ldap.cyber.lab:636`
 - API CRUD: `http://localhost:8080`
+- MailHog: `http://localhost:8025`
 
 ## 3) Pruebas rapidas
 
@@ -59,6 +66,14 @@ Consultar usuario:
 curl http://localhost:8080/users/juan
 ```
 
+Login de prueba:
+
+```bash
+curl -X POST http://localhost:8080/login \
+  -H "Content-Type: application/json" \
+  -d '{"uid":"juan","password":"Temporal123!"}'
+```
+
 Solicitar recuperacion (envia correo real segun `.env`):
 
 ```bash
@@ -66,6 +81,8 @@ curl -X POST http://localhost:8080/password-recovery/request \
   -H "Content-Type: application/json" \
   -d '{"uid":"juan"}'
 ```
+
+Si usas la configuracion de laboratorio con MailHog, revisa el mensaje en `http://localhost:8025`.
 
 Confirmar recuperacion:
 
@@ -85,5 +102,5 @@ curl -X POST http://localhost:8080/password-recovery/confirm \
 
 ## Notas
 
-- Si cambias `LDAP_BASE_DN` en `.env`, ajusta tambien `ldap/bootstrap/10-people.ldif`.
+- El dominio y DN del laboratorio usan `cyber.lab` / `dc=cyber,dc=lab`.
 - Agrega evidencia (capturas + logs) para el entregable.

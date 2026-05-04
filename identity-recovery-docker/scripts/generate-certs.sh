@@ -12,7 +12,7 @@ openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
 openssl req -newkey rsa:2048 -nodes \
   -keyout "$CERT_DIR/ldap.key" \
   -out "$CERT_DIR/ldap.csr" \
-  -subj "/C=CL/ST=RM/L=Santiago/O=Aseguridad/OU=Clase/CN=openldap"
+  -subj "/C=CL/ST=RM/L=Santiago/O=Aseguridad/OU=Clase/CN=ldap.cyber.lab"
 
 cat > "$CERT_DIR/ldap.ext" <<EOF
 authorityKeyIdentifier=keyid,issuer
@@ -21,8 +21,9 @@ keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
 subjectAltName=@alt_names
 [alt_names]
-DNS.1=openldap
-DNS.2=localhost
+DNS.1=ldap.cyber.lab
+DNS.2=openldap
+DNS.3=localhost
 IP.1=127.0.0.1
 EOF
 

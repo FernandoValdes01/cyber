@@ -9,14 +9,14 @@ import time
 from email.message import EmailMessage
 
 from flask import Flask, jsonify, request
-from ldap3 import ALL, MODIFY_REPLACE, Connection, Server, Tls
+from ldap3 import ALL, BASE, MODIFY_REPLACE, Connection, Server, Tls
 
 
 app = Flask(__name__)
 
 
-LDAP_URL = os.getenv("LDAP_URL", "ldaps://openldap:636")
-LDAP_BASE_DN = os.getenv("LDAP_BASE_DN", "dc=lab,dc=local")
+LDAP_URL = os.getenv("LDAP_URL", "ldaps://ldap.cyber.lab:636")
+LDAP_BASE_DN = os.getenv("LDAP_BASE_DN", "dc=cyber,dc=lab")
 LDAP_ADMIN_DN = os.getenv("LDAP_ADMIN_DN", f"cn=admin,{LDAP_BASE_DN}")
 LDAP_ADMIN_PASSWORD = os.getenv("LDAP_ADMIN_PASSWORD", "")
 LDAP_CA_CERT_PATH = os.getenv("LDAP_CA_CERT_PATH", "/run/secrets/ca.crt")
@@ -83,6 +83,7 @@ def ldap_connection() -> Connection:
     tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=LDAP_CA_CERT_PATH)
     server = Server(LDAP_URL, use_ssl=True, tls=tls, get_info=ALL)
     conn = Connection(server, user=LDAP_ADMIN_DN, password=LDAP_ADMIN_PASSWORD, auto_bind=True)
+    ensure_directory_structure(conn)
     return conn
 
 
@@ -90,7 +91,26 @@ def user_dn(uid: str) -> str:
     return f"uid={uid},ou=people,{LDAP_BASE_DN}"
 
 
+def ensure_directory_structure(conn: Connection):
+    if not conn.search(LDAP_BASE_DN, "(objectClass=*)", search_scope=BASE, attributes=["objectClass"]):
+        conn.add(
+            LDAP_BASE_DN,
+            ["top", "dcObject", "organization"],
+            {
+                "dc": LDAP_BASE_DN.split(",", 1)[0].split("=", 1)[1],
+                "o": os.getenv("LDAP_ORGANISATION", "Aseguridad Lab"),
+            },
+        )
+
+    people_dn = f"ou=people,{LDAP_BASE_DN}"
+    if not conn.search(people_dn, "(objectClass=*)", search_scope=BASE, attributes=["objectClass"]):
+        conn.add(people_dn, ["organizationalUnit"], {"ou": "people"})
+
+
 def send_reset_email(to_email: str, reset_link: str):
+    if not SMTP_HOST or not SMTP_FROM:
+        return False
+
     msg = EmailMessage()
     msg["Subject"] = "Recuperacion de cuenta"
     msg["From"] = SMTP_FROM
@@ -98,16 +118,25 @@ def send_reset_email(to_email: str, reset_link: str):
     msg.set_content(f"Usa este enlace para recuperar tu cuenta (expira en {TOKEN_EXPIRATION_MINUTES} min):\n{reset_link}")
 
     if SMTP_USE_SSL:
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
-            smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
-            smtp.send_message(msg)
-        return
+        try:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as smtp:
+                if SMTP_USERNAME and SMTP_PASSWORD:
+                    smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+                smtp.send_message(msg)
+            return True
+        except Exception:
+            return False
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
-        if SMTP_USE_STARTTLS:
-            smtp.starttls()
-        smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
-        smtp.send_message(msg)
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+            if SMTP_USE_STARTTLS:
+                smtp.starttls()
+            if SMTP_USERNAME and SMTP_PASSWORD:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(msg)
+        return True
+    except Exception:
+        return False
 
 
 @app.get("/health")
@@ -140,6 +169,8 @@ def create_user():
     conn = ldap_connection()
     ok = conn.add(dn, attributes=attrs)
     if not ok:
+        if conn.result.get("result") == 68:
+            return jsonify({"error": "usuario ya existe"}), 409
         return jsonify({"error": conn.result}), 400
     return jsonify({"message": "usuario creado", "dn": dn}), 201
 
@@ -187,6 +218,25 @@ def delete_user(uid):
     return jsonify({"message": "usuario eliminado"})
 
 
+@app.post("/login")
+def login():
+    data = request.get_json(force=True)
+    uid = data.get("uid")
+    password = data.get("password")
+
+    if not uid or not password:
+        return jsonify({"error": "uid y password son obligatorios"}), 400
+
+    tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=LDAP_CA_CERT_PATH)
+    server = Server(LDAP_URL, use_ssl=True, tls=tls, get_info=ALL)
+    conn = Connection(server, user=user_dn(uid), password=password, auto_bind=False)
+
+    if not conn.bind():
+        return jsonify({"error": "credenciales invalidas"}), 401
+
+    return jsonify({"message": "login correcto", "uid": uid})
+
+
 @app.post("/password-recovery/request")
 def request_recovery():
     data = request.get_json(force=True)
@@ -202,14 +252,49 @@ def request_recovery():
     mail = str(conn.entries[0].mail)
     token = make_reset_token(uid)
     reset_link = f"http://localhost:{APP_PORT}/password-recovery/confirm?token={token}"
-    send_reset_email(mail, reset_link)
+    sent = send_reset_email(mail, reset_link)
+
+    if not sent:
+        return jsonify({
+            "message": "smtp no configurado, enlace generado para prueba local",
+            "token": token,
+            "reset_link": reset_link,
+        })
 
     return jsonify({"message": "enlace de recuperacion enviado"})
 
 
-@app.post("/password-recovery/confirm")
+@app.route("/password-recovery/confirm", methods=["GET", "POST"])
 def confirm_recovery():
-    data = request.get_json(force=True)
+    if request.method == "GET":
+        token = request.args.get("token", "")
+        return f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recuperar contraseña</title>
+  <style>
+    body {{ font-family: sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; }}
+    input {{ width: 100%; padding: 10px; margin: 8px 0 16px; box-sizing: border-box; }}
+    button {{ padding: 10px 16px; }}
+    code {{ word-break: break-all; }}
+  </style>
+</head>
+<body>
+  <h1>Recuperar contraseña</h1>
+  <p>Token recibido:</p>
+  <p><code>{token}</code></p>
+  <form method="post">
+    <input type="hidden" name="token" value="{token}">
+    <label for="new_password">Nueva contraseña</label>
+    <input id="new_password" name="new_password" type="password" required>
+    <button type="submit">Actualizar contraseña</button>
+  </form>
+</body>
+</html>"""
+
+    data = request.get_json(silent=True) or request.form or {}
     token = data.get("token")
     new_password = data.get("new_password")
     if not token or not new_password:
