@@ -1,0 +1,53 @@
+services:
+  openldap:
+    image: osixia/openldap:1.5.0
+    container_name: openldap
+    environment:
+      LDAP_ORGANISATION: ${LDAP_ORGANISATION}
+      LDAP_DOMAIN: ${LDAP_DOMAIN}
+      LDAP_BASE_DN: ${LDAP_BASE_DN}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      LDAP_TLS: "true"
+      LDAP_TLS_CRT_FILENAME: ldap.crt
+      LDAP_TLS_KEY_FILENAME: ldap.key
+      LDAP_TLS_CA_CRT_FILENAME: ca.crt
+      LDAP_TLS_VERIFY_CLIENT: never
+    ports:
+      - "636:636"
+    volumes:
+      - ./certs:/container/service/slapd/assets/certs
+      - ./ldap/bootstrap:/container/service/slapd/assets/config/bootstrap/ldif/custom
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldaps://localhost:636", "-D", "cn=admin,${LDAP_BASE_DN}", "-w", "${LDAP_ADMIN_PASSWORD}", "-b", "${LDAP_BASE_DN}", "(objectClass=*)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  crud-app:
+    build:
+      context: ./app
+    container_name: crud-app
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8080
+      LDAP_URL: ${LDAP_URL}
+      LDAP_BASE_DN: ${LDAP_BASE_DN}
+      LDAP_ADMIN_DN: ${LDAP_ADMIN_DN}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      LDAP_CA_CERT_PATH: /run/secrets/ca.crt
+      TOKEN_SECRET_KEY: ${TOKEN_SECRET_KEY}
+      TOKEN_EXPIRATION_MINUTES: ${TOKEN_EXPIRATION_MINUTES}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_USE_STARTTLS: ${SMTP_USE_STARTTLS}
+      SMTP_USE_SSL: ${SMTP_USE_SSL}
+    depends_on:
+      openldap:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./certs/ca.crt:/run/secrets/ca.crt:ro

@@ -1,0 +1,3 @@
+dn: ou=people,dc=lab,dc=local
+objectClass: organizationalUnit
+ou: people
