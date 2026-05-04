@@ -1,1 +1,2 @@
 .env
+identity-recovery-docker/ldap/bootstrap/10-people.ldif
