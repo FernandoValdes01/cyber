@@ -1,6 +1,8 @@
 services:
   openldap:
-    image: osixia/openldap:1.5.0
+    build:
+      context: ./ldap
+    image: identity-recovery-docker-openldap
     container_name: openldap
     environment:
       LDAP_ORGANISATION: ${LDAP_ORGANISATION}
@@ -16,7 +18,6 @@ services:
       - "636:636"
     volumes:
       - ./certs:/container/service/slapd/assets/certs
-      - ./ldap/bootstrap:/container/service/slapd/assets/config/bootstrap/ldif/custom
     healthcheck:
       test: ["CMD", "ldapsearch", "-x", "-H", "ldaps://localhost:636", "-D", "cn=admin,${LDAP_BASE_DN}", "-w", "${LDAP_ADMIN_PASSWORD}", "-b", "${LDAP_BASE_DN}", "(objectClass=*)"]
       interval: 15s
