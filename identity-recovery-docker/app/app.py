@@ -1,4 +1,5 @@
 import base64
+import html
 import hashlib
 import hmac
 import json
@@ -139,6 +140,55 @@ def send_reset_email(to_email: str, reset_link: str):
         return False
 
 
+def render_reset_form(token: str, message: str = "", is_error: bool = False) -> str:
+    escaped_token = html.escape(token, quote=True)
+    feedback = ""
+    if message:
+        color = "#b42318" if is_error else "#027a48"
+        feedback = f'<p style="padding: 12px; border-radius: 8px; background: #f8f9fb; color: {color};">{html.escape(message)}</p>'
+
+    return f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recuperar contrasena</title>
+  <style>
+    :root {{ color-scheme: light; }}
+    body {{ font-family: Arial, sans-serif; background: #f4f7fb; margin: 0; padding: 24px; color: #101828; }}
+    main {{ max-width: 420px; margin: 48px auto; background: white; border-radius: 12px; padding: 24px; box-shadow: 0 12px 32px rgba(16, 24, 40, 0.08); }}
+    h1 {{ margin-top: 0; font-size: 24px; }}
+    p {{ line-height: 1.5; }}
+    label {{ display: block; font-weight: 600; margin-bottom: 8px; }}
+    input {{ width: 100%; padding: 12px; border: 1px solid #d0d5dd; border-radius: 8px; box-sizing: border-box; margin-bottom: 16px; }}
+    button {{ width: 100%; padding: 12px; border: 0; border-radius: 8px; background: #155eef; color: white; font-weight: 600; cursor: pointer; }}
+    button:hover {{ background: #004eea; }}
+    .muted {{ color: #475467; font-size: 14px; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Recuperar contrasena</h1>
+    <p class="muted">Ingresa tu nueva contrasena para completar la recuperacion.</p>
+    {feedback}
+    <form method="post">
+      <input type="hidden" name="token" value="{escaped_token}">
+      <label for="new_password">Nueva contrasena</label>
+      <input id="new_password" name="new_password" type="password" minlength="8" required>
+      <button type="submit">Actualizar contrasena</button>
+    </form>
+  </main>
+</body>
+</html>"""
+
+
+def wants_html_response() -> bool:
+    if request.form:
+        return True
+    best = request.accept_mimetypes.best_match(["text/html", "application/json"])
+    return best == "text/html" and request.accept_mimetypes[best] > request.accept_mimetypes["application/json"]
+
+
 @app.get("/health")
 def health():
     return jsonify({"status": "ok"})
@@ -268,46 +318,38 @@ def request_recovery():
 def confirm_recovery():
     if request.method == "GET":
         token = request.args.get("token", "")
-        return f"""<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Recuperar contraseña</title>
-  <style>
-    body {{ font-family: sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; }}
-    input {{ width: 100%; padding: 10px; margin: 8px 0 16px; box-sizing: border-box; }}
-    button {{ padding: 10px 16px; }}
-    code {{ word-break: break-all; }}
-  </style>
-</head>
-<body>
-  <h1>Recuperar contraseña</h1>
-  <p>Token recibido:</p>
-  <p><code>{token}</code></p>
-  <form method="post">
-    <input type="hidden" name="token" value="{token}">
-    <label for="new_password">Nueva contraseña</label>
-    <input id="new_password" name="new_password" type="password" required>
-    <button type="submit">Actualizar contraseña</button>
-  </form>
-</body>
-</html>"""
+        if not token:
+            return render_reset_form("", "El enlace no incluye un token de recuperacion.", True), 400
+
+        _, err = verify_reset_token(token)
+        if err:
+            return render_reset_form(token, f"El enlace no es valido: {err}.", True), 400
+
+        return render_reset_form(token)
 
     data = request.get_json(silent=True) or request.form or {}
     token = data.get("token")
     new_password = data.get("new_password")
     if not token or not new_password:
+        if wants_html_response():
+            return render_reset_form(token or "", "Token y nueva contrasena son obligatorios.", True), 400
         return jsonify({"error": "token y new_password son obligatorios"}), 400
 
     uid, err = verify_reset_token(token)
     if err:
+        if wants_html_response():
+            return render_reset_form(token, f"No se pudo validar el enlace: {err}.", True), 400
         return jsonify({"error": err}), 400
 
     conn = ldap_connection()
     ok = conn.modify(user_dn(uid), {"userPassword": [(MODIFY_REPLACE, [generate_ssha(new_password)])]})
     if not ok:
+        if wants_html_response():
+            return render_reset_form(token, "No se pudo actualizar la contrasena en LDAP.", True), 400
         return jsonify({"error": conn.result}), 400
+
+    if wants_html_response():
+        return render_reset_form("", "Contrasena actualizada correctamente. Ya puedes iniciar sesion con la nueva clave.")
 
     return jsonify({"message": "contrasena actualizada"})
 

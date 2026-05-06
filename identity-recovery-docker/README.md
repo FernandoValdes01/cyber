@@ -66,7 +66,7 @@ Consultar usuario:
 curl http://localhost:8080/users/juan
 ```
 
-Login de prueba:
+Login con la contrasena temporal:
 
 ```bash
 curl -X POST http://localhost:8080/login \
@@ -84,12 +84,22 @@ curl -X POST http://localhost:8080/password-recovery/request \
 
 Si usas la configuracion de laboratorio con MailHog, revisa el mensaje en `http://localhost:8025`.
 
-Confirmar recuperacion:
+Abre el enlace recibido en el correo. El navegador mostrara un formulario minimo para ingresar la nueva contrasena.
+
+Si quieres confirmar por API en vez de usar el formulario, copia el `token` del enlace y ejecuta:
 
 ```bash
 curl -X POST http://localhost:8080/password-recovery/confirm \
   -H "Content-Type: application/json" \
   -d '{"token":"<TOKEN>","new_password":"NuevaSegura123!"}'
+```
+
+Login con la contrasena nueva:
+
+```bash
+curl -X POST http://localhost:8080/login \
+  -H "Content-Type: application/json" \
+  -d '{"uid":"juan","password":"NuevaSegura123!"}'
 ```
 
 ## Controles de seguridad cubiertos
